@@ -1,2 +1,1 @@
-# Eduassist-chatbot
-1. To develop an AI-powered chatbot that can provide immediate and personalized customer support to users of an online education platform.  2. To enhance user experience and satisfaction by providing quick and accurate responses to queries and concerns.  3. To analyze the effectiveness of the chatbot in improving customer support processes.
+# Eduassist-chatbot is an  AI-powered chatbot that can provide immediate and personalized customer support to users of an online education platform.  2. To enhance user experience and satisfaction by providing quick and accurate responses to queries and concerns.  3. To analyze the effectiveness of the chatbot in improving customer support processes.
