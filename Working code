@@ -1,0 +1,1129 @@
+"""
+=============================================================================
+PROJECT TITLE : AI-Powered Customer Support Chatbot for Online Education
+STUDENT NAME  : Akshay Singh
+ROLL NUMBER   : O24MSD110289
+COURSE / SEM  : <Your Course>
+=============================================================================
+
+OBJECTIVES (mapped in this file):
+  1. AI chatbot for personalized customer support on an education platform
+  2. Quick, accurate replies for courses, enrollment, payments, tech issues
+  3. Intent + confidence scores for measuring support effectiveness
+
+TECHNOLOGIES USED:
+  - Python 3
+  - NLP via text similarity (difflib.SequenceMatcher) for intent classification
+  - Knowledge-base responses (no external API or pip packages required)
+
+HOW TO RUN (all project milestones):
+  python eduassist_chatbot.py              -> Milestone 2: live chat prototype
+  python eduassist_chatbot.py --research   -> Milestone 1: AI technology summary
+  python eduassist_chatbot.py --test       -> Milestone 4: user testing phase
+  python eduassist_chatbot.py --analyze    -> Milestone 5: analyse user data
+  python eduassist_chatbot.py --improve    -> Milestone 6: apply improvements
+  python eduassist_chatbot.py --demo       -> quick demo for examiner
+=============================================================================
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+import uuid
+from collections import Counter
+from datetime import datetime, timezone
+from difflib import SequenceMatcher
+from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
+SESSIONS_FILE = DATA_DIR / "user_sessions.json"
+LEARNED_FILE = DATA_DIR / "learned_examples.json"
+
+# Milestone 1 — Research: AI options considered for this chatbot
+AI_RESEARCH = {
+    "chosen": {
+        "name": "Hybrid NLP (similarity + keywords + rules)",
+        "pros": "No GPU, no API key, fast, explainable intents, works offline",
+        "cons": "Needs example phrases; weak on totally new topics without learning",
+    },
+    "alternatives": [
+        {"name": "Pure rule-based (regex only)", "pros": "Very fast", "cons": "Brittle, hard to maintain"},
+        {"name": "TF-IDF + cosine (scikit-learn)", "pros": "Strong text matching", "cons": "Extra library; used in backend/ version"},
+        {"name": "Large language model (GPT)", "pros": "Very flexible replies", "cons": "Cost, privacy, needs internet/API key"},
+        {"name": "Rasa / Dialogflow", "pros": "Enterprise dialogs", "cons": "Heavy setup for a college prototype"},
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Knowledge base: intents, training examples, and responses
+# (Many example phrases help the bot understand how real customers ask questions.)
+# ---------------------------------------------------------------------------
+KNOWLEDGE_BASE = {
+    "greeting": {
+        "examples": [
+            "hello", "hi", "hi there", "hey", "good morning", "good evening",
+            "start", "help me", "i need help", "anyone there", "support please",
+        ],
+        "response": (
+            "Hello! I'm EduAssist, your support assistant for LearnHub Online College. "
+            "I can help with courses, enrollment, fees, assignments, and technical issues. "
+            "What would you like to know?"
+        ),
+    },
+    "courses_info": {
+        "examples": [
+            "what courses do you offer",
+            "what courses are available",
+            "what are the courses available in college",
+            "courses available in college",
+            "list of courses in college",
+            "which courses can i study",
+            "show me all courses",
+            "course catalog",
+            "list available courses",
+            "what programs do you have",
+            "what subjects are taught",
+            "college course list",
+            "university courses offered",
+            "what can i learn here",
+            "available programs for students",
+            "tell me about your courses",
+            "how many courses are there",
+            "beginner friendly courses",
+            "are there short term courses",
+            "diploma courses available",
+            "online degree programs",
+            "what is data science course about",
+            "python course details",
+            "web development course duration",
+            "how long is the python course",
+            "when does data science start",
+            "course fees for each program",
+            "difference between python and data science course",
+            "which course is best for beginners",
+            "do you teach machine learning",
+            "is there ui ux design course",
+            "digital marketing course info",
+            "computer science courses",
+            "business and management courses",
+            "engineering courses online",
+            "part time courses for working professionals",
+            "what courses are available",
+            "which courses are available right now",
+            "show available courses",
+            "list all available courses",
+        ],
+        "response": (
+            "LearnHub Online College currently offers these programs:\n"
+            "  1. Web Development (HTML, CSS, JavaScript, React) — 10 weeks\n"
+            "  2. Data Science (Python, statistics, ML basics) — 12 weeks\n"
+            "  3. Python Programming (beginner to intermediate) — 8 weeks\n"
+            "  4. UI/UX Design (Figma, prototyping, user research) — 8 weeks\n"
+            "  5. Digital Marketing (SEO, ads, social media) — 6 weeks\n"
+            "  6. Business & Management fundamentals — 8 weeks\n"
+            "All include live classes, recorded lectures, assignments, and a certificate. "
+            "Visit Courses -> All Programs on the portal for full syllabi and start dates."
+        ),
+    },
+    "enrollment": {
+        "examples": [
+            "how do i enroll", "how to enroll in a course", "enrollment process",
+            "sign up for a course", "register for classes", "admission procedure",
+            "how to apply for college", "join a course", "enrollment deadline",
+            "last date to register", "can i still enroll", "late enrollment possible",
+            "waitlist for full course", "course is full can i waitlist",
+            "prerequisites for data science", "eligibility for web development",
+            "do i need prior experience", "minimum qualification required",
+            "do i get a certificate", "is certificate provided",
+            "transfer to another batch", "change my cohort",
+            "cancel enrollment before course starts", "documents needed for admission",
+            "how to enroll in python course", "steps to join learnhub",
+            "i want to enroll in a new course", "i wanna enroll in a course",
+            "want to join a new course", "sign me up for a class",
+            "how can i take admission", "register me for college",
+        ],
+        "response": (
+            "Enrollment steps at LearnHub:\n"
+            "  1. Choose your course on the website\n"
+            "  2. Click Enroll Now / Apply Now\n"
+            "  3. Create an account or sign in\n"
+            "  4. Pay fees or apply for scholarship\n"
+            "  5. Upload ID proof if required\n"
+            "Registration closes 48 hours before the batch starts. "
+            "You receive a certificate after 80% attendance and passing assignments. "
+            "For waitlist or batch change: enrollments@learnhub.edu"
+        ),
+    },
+    "payments": {
+        "examples": [
+            "how much does it cost", "course fees", "fee structure",
+            "payment plans", "emi option", "installments available",
+            "refund policy", "can i get refund", "money back",
+            "invoice for my purchase", "download receipt",
+            "discount code not working", "coupon code", "student discount",
+            "can i pay with paypal", "payment failed", "card declined",
+            "scholarship application", "can i get scholarship", "financial aid", "fee waiver",
+            "how much is python course", "python course fees",
+            "how much is the fees for courses here", "fees for courses here",
+            "what is the fee structure", "total cost of course",
+            "how much do i have to pay", "semester fees", "yearly package price", "hidden charges",
+            "how to pay fees online", "billing issue", "double charged",
+        ],
+        "response": (
+            "Fees at LearnHub: $199–$1,499 per course depending on program length.\n"
+            "Payment options: credit/debit card, PayPal, UPI (India), bank transfer.\n"
+            "Installments: 3-month or 6-month EMI on purchases above $300.\n"
+            "Refunds: full refund within 7 days if less than 20% of course accessed.\n"
+            "Scholarships: apply under Account -> Scholarships (up to 50% off).\n"
+            "Billing help: Account -> Billing or billing@learnhub.edu"
+        ),
+    },
+    "technical_support": {
+        "examples": [
+            "cannot log in", "login problem", "forgot password", "reset password",
+            "account locked", "otp not received", "verification email missing",
+            "video not playing", "lecture video stuck", "audio not working",
+            "website not loading", "website is broken", "page error 404",
+            "app keeps crashing", "mobile app not working",
+            "assignment upload failed", "cannot submit homework",
+            "slow internet on portal", "dashboard not showing courses",
+            "certificate download error", "pdf not opening",
+            "camera not working in live class", "zoom link not working",
+        ],
+        "response": (
+            "Technical troubleshooting:\n"
+            "  1. Log in issues -> use Forgot Password; check spam for reset email\n"
+            "  2. Video issues -> refresh page; try Chrome/Firefox; lower video quality\n"
+            "  3. Upload issues -> max 25 MB; allowed: PDF, DOCX, ZIP, JPG\n"
+            "  4. Live class -> join from dashboard 5 min early; allow mic/camera permissions\n"
+            "  5. Still stuck -> Support -> Raise Ticket (include screenshot + browser name)"
+        ),
+    },
+    "account": {
+        "examples": [
+            "change my email", "update email address", "wrong email registered",
+            "update profile", "change phone number", "edit personal details",
+            "delete my account", "close account permanently",
+            "two factor authentication", "enable 2fa", "security settings",
+            "merge two accounts", "duplicate account", "forgot username",
+            "change password", "profile picture update",
+        ],
+        "response": (
+            "Account settings: Account -> Settings\n"
+            "  - Email/phone: update and verify via OTP sent to new contact\n"
+            "  - Password: Settings -> Security -> Change Password\n"
+            "  - 2FA: Settings -> Security -> Enable Authenticator\n"
+            "  - Delete account: Settings -> Privacy -> Delete Account (export data first)\n"
+            "Duplicate accounts: email support@learnhub.edu with both account IDs."
+        ),
+    },
+    "live_sessions": {
+        "examples": [
+            "when is the next live class", "class schedule", "timetable",
+            "missed live session", "i missed today's lecture", "absent from class",
+            "recording available", "watch recorded lecture", "replay class",
+            "timezone for lectures", "class timing ist", "what time is class",
+            "calendar sync", "add class to google calendar",
+            "how to join live session", "live class link", "attendance in live class",
+        ],
+        "response": (
+            "Live classes: see your dashboard -> Schedule for dates and times (shown in your timezone).\n"
+            "Join: click Join Live Class 5 minutes before start.\n"
+            "Missed a class? Recordings are under Lessons -> Replays within 24 hours.\n"
+            "Attendance is marked automatically when you stay 45+ minutes.\n"
+            "Sync schedule: use Add to Google Calendar on each session page."
+        ),
+    },
+    "assignments": {
+        "examples": [
+            "assignment deadline", "when is homework due", "submit assignment",
+            "late submission allowed", "submit homework late", "extension for assignment", "missed deadline",
+            "grading criteria", "how are assignments graded", "passing marks",
+            "quiz not working", "mcq test issues", "project submission format",
+            "plagiarism policy", "resubmit assignment", "check my grades",
+            "results not published", "marksheet download",
+        ],
+        "response": (
+            "Assignments: deadlines appear on dashboard -> Assignments.\n"
+            "Submit: open assignment -> Upload File or Complete Quiz -> Submit.\n"
+            "Late submission: allowed up to 2 days with 10% penalty (unless extension approved).\n"
+            "Grading: released within 5 working days; passing is usually 40%.\n"
+            "Extensions: message your instructor 48 hours before the deadline.\n"
+            "Grades: Account -> Grades; contact academics@learnhub.edu for disputes."
+        ),
+    },
+    "career": {
+        "examples": [
+            "placement support", "job assistance", "career guidance",
+            "internship opportunities", "resume review", "linkedin help",
+            "will i get a job after course", "employability", "industry connections",
+            "mock interview", "portfolio review", "alumni network",
+        ],
+        "response": (
+            "Career services at LearnHub (included in premium bundles):\n"
+            "  - Resume & LinkedIn review workshops\n"
+            "  - Mock interviews with industry mentors\n"
+            "  - Internship referrals for top performers\n"
+            "  - Job board access for 6 months after completion\n"
+            "Email careers@learnhub.edu or visit Student Hub -> Career Support."
+        ),
+    },
+    "faculty": {
+        "examples": [
+            "who are the teachers", "who teaches the courses", "list of faculty",
+            "who is my instructor", "professor name", "teachers for python course",
+            "faculty members", "are teachers industry experts", "who will teach data science",
+            "mentor for web development", "faculty qualification", "can i meet the teacher",
+            "instructor profile", "who are the trainers",
+        ],
+        "response": (
+            "LearnHub faculty are industry professionals with 5+ years of experience:\n"
+            "  - Web Development: led by senior full-stack engineers\n"
+            "  - Data Science: PhD / MSc statisticians and ML engineers\n"
+            "  - Python: certified Python developers and educators\n"
+            "  - UI/UX, Marketing, Business: practicing designers and managers\n"
+            "Each course page lists instructor name, bio, and LinkedIn under "
+            "Courses -> [Your Course] -> Instructors. Live Q&A sessions are included weekly."
+        ),
+    },
+    "contact": {
+        "examples": [
+            "contact support", "customer care number", "helpline",
+            "talk to human", "speak to agent", "email support",
+            "college office hours", "where is campus", "physical address",
+            "complaint", "escalate issue", "who do i contact",
+        ],
+        "response": (
+            "Contact LearnHub support:\n"
+            "  - Email: support@learnhub.edu (reply within 24 hours)\n"
+            "  - Live chat: Mon–Sat, 9 AM–8 PM (this chatbot, 24/7 for FAQs)\n"
+            "  - Phone: +1-800-LEARN-HUB (billing & admissions)\n"
+            "  - Office: 123 Education Park, Online Campus (hybrid events monthly)\n"
+            "Type your issue here first — I can solve most questions instantly!"
+        ),
+    },
+    "goodbye": {
+        "examples": [
+            "thanks bye", "goodbye", "bye", "see you", "that's all",
+            "no more questions", "thank you", "thanks for help", "done",
+        ],
+        "response": (
+            "You're welcome! Good luck with your studies at LearnHub. "
+            "Come back anytime if you need help!"
+        ),
+    },
+}
+
+# Keywords: if the user's message contains these, boost that intent (handles varied wording)
+INTENT_KEYWORDS = {
+    "courses_info": [
+        "course", "courses", "program", "programs", "subject", "subjects",
+        "college", "university", "catalog", "syllabus", "curriculum",
+        "offer", "offered", "study", "degree", "diploma", "bootcamp",
+        "class", "classes", "branch", "department", "semester subjects",
+    ],
+    "faculty": [
+        "teacher", "teachers", "faculty", "instructor", "instructors",
+        "professor", "professors", "mentor", "mentors", "tutor", "tutors", "trainer",
+        "who teaches", "who teach", "who will teach",
+    ],
+    "enrollment": [
+        "enroll", "enrollment", "enrol", "register", "registration", "admission",
+        "apply", "application", "join", "sign up", "signup", "waitlist",
+        "prerequisite", "eligibility", "certificate", "batch", "cohort",
+    ],
+    "payments": [
+        "fee", "fees", "cost", "price", "payment", "pay", "refund", "invoice",
+        "billing", "scholarship", "discount", "coupon", "emi", "installment",
+        "money", "charged", "receipt",
+    ],
+    "technical_support": [
+        "login", "log in", "password", "video", "not playing", "error", "bug",
+        "crash", "upload", "download", "broken", "slow", "loading", "otp",
+        "website", "app", "technical", "issue", "problem", "fix",
+    ],
+    "account": [
+        "account", "profile", "email", "phone", "delete account", "2fa", "security",
+        "username", "personal details",
+    ],
+    "live_sessions": [
+        "live class", "live session", "live lecture", "class schedule", "timetable",
+        "recording", "replay", "missed class", "attendance", "zoom", "google calendar",
+    ],
+    "assignments": [
+        "assignment", "homework", "deadline", "submit", "grade", "marks",
+        "quiz", "project", "plagiarism", "results", "marksheet",
+    ],
+    "career": [
+        "job", "placement", "career", "internship", "resume", "interview",
+        "employability", "alumni",
+    ],
+    "contact": [
+        "contact", "helpline", "phone number", "email support", "human", "agent",
+        "complaint", "office hours", "address", "call",
+    ],
+    "greeting": ["hello", "hi", "hey", "good morning", "good evening"],
+    "goodbye": ["bye", "goodbye", "thank you", "thanks", "see you"],
+}
+
+FALLBACK_RESPONSE = (
+    "I'm not sure about that yet. Try asking about:\n"
+    "  - Available courses & programs\n"
+    "  - Fees & payment plans\n"
+    "  - Teachers / faculty\n"
+    "  - Enrollment & admission\n"
+    "  - Assignments, live classes, or login issues"
+)
+
+COURSE_KEYWORDS = {
+    "python": "Python Programming",
+    "data science": "Data Science",
+    "web development": "Web Development",
+    "web dev": "Web Development",
+    "ui ux": "UI/UX Design",
+    "ui/ux": "UI/UX Design",
+    "marketing": "Digital Marketing",
+    "digital marketing": "Digital Marketing",
+    "business": "Business & Management",
+    "machine learning": "Data Science",
+    "javascript": "Web Development",
+    "react": "Web Development",
+}
+
+CONFIDENCE_THRESHOLD = 0.35
+
+# Common typos and casual speech students use
+TYPO_FIXES = {
+    "couses": "courses",
+    "coures": "courses",
+    "corse": "course",
+    "enrol": "enroll",
+    "addmission": "admission",
+    "fee structure": "fees",
+    "wanna": "want to",
+    "gonna": "going to",
+    "pls": "please",
+    "plz": "please",
+    "u ": "you ",
+    "ur ": "your ",
+    "r ": "are ",
+    "whats": "what is",
+    "hows": "how is",
+    "dont": "do not",
+    "cant": "cannot",
+    "im ": "i am ",
+    "i'm ": "i am ",
+}
+
+
+def normalize_message(text: str) -> str:
+    """Clean and fix common spelling before matching."""
+    q = text.lower().strip()
+    for wrong, right in TYPO_FIXES.items():
+        q = q.replace(wrong, right)
+    q = re.sub(r"[^\w\s?']", " ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+    return q
+
+
+def looks_like_noise(text: str) -> bool:
+    """Detect pasted terminal run commands (not real customer questions)."""
+    t = text.strip()
+    lower = t.lower()
+    if not t:
+        return False
+    noise_markers = (
+        ".venv",
+        "bin/python",
+        "eduassist_chatbot.py",
+        "Users/",
+        "Leetcode practise",
+    )
+    if any(m in t for m in noise_markers):
+        return True
+    if t.startswith("/") or t.startswith('"') and "/" in t:
+        return True
+    if lower.count("/") >= 2 and "python" in lower:
+        return True
+    return False
+
+
+def text_similarity(a: str, b: str) -> float:
+    """Character-level similarity."""
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+def token_jaccard(a: str, b: str) -> float:
+    """Word overlap similarity (handles rephrased questions well)."""
+    words_a = set(a.split())
+    words_b = set(b.split())
+    if not words_a or not words_b:
+        return 0.0
+    return len(words_a & words_b) / len(words_a | words_b)
+
+
+def example_similarity(query: str, example: str) -> float:
+    """Best of character + word similarity."""
+    return max(text_similarity(query, example), token_jaccard(query, example))
+
+
+def _keyword_in_text(query: str, keyword: str) -> bool:
+    """Match whole words so 'scholarship' does not match 'hi'."""
+    if len(keyword) <= 3:
+        return re.search(r"\b" + re.escape(keyword) + r"\b", query) is not None
+    return keyword in query
+
+
+def keyword_intent_score(query: str, intent: str) -> float:
+    """Score intent from important words in the customer's message."""
+    q = query.lower()
+    keywords = INTENT_KEYWORDS.get(intent, [])
+    hits = sum(1 for kw in keywords if _keyword_in_text(q, kw))
+    if hits == 0:
+        return 0.0
+    return min(0.5 + hits * 0.1, 0.92)
+
+
+def _load_learned_examples() -> dict[str, list[str]]:
+    if not LEARNED_FILE.exists():
+        return {}
+    with open(LEARNED_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_learned_examples(data: dict[str, list[str]]) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(LEARNED_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+class SessionLogger:
+    """Milestone 4 & 5 — log chats and feedback for analysis."""
+
+    def __init__(self) -> None:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self._data = self._read_all()
+        self._session: dict | None = None
+
+    def _read_all(self) -> dict:
+        if not SESSIONS_FILE.exists():
+            return {"sessions": []}
+        with open(SESSIONS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+
+    def _write_all(self) -> None:
+        with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(self._data, f, indent=2)
+
+    def start(self) -> str:
+        sid = str(uuid.uuid4())[:8]
+        self._session = {
+            "id": sid,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "ended_at": None,
+            "messages": [],
+            "feedback": None,
+        }
+        return sid
+
+    def log_exchange(self, user: str, result: dict) -> None:
+        if not self._session:
+            return
+        self._session["messages"].append(
+            {"role": "user", "content": user, "at": datetime.now(timezone.utc).isoformat()}
+        )
+        self._session["messages"].append(
+            {
+                "role": "bot",
+                "content": result["reply"],
+                "intent": result["intent"],
+                "confidence": result["confidence"],
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
+    def end(self, rating: int | None = None, comment: str = "") -> None:
+        if not self._session:
+            return
+        self._session["ended_at"] = datetime.now(timezone.utc).isoformat()
+        if rating is not None:
+            self._session["feedback"] = {"rating": rating, "comment": comment}
+        self._data["sessions"].append(self._session)
+        self._write_all()
+        self._session = None
+
+    @property
+    def sessions(self) -> list[dict]:
+        return self._data.get("sessions", [])
+
+
+class EduAssistChatbot:
+    """Milestone 2 & 3 — chatbot prototype with integrated NLP."""
+
+    def __init__(self) -> None:
+        self._pairs: list[tuple[str, str]] = []
+        self._learned = _load_learned_examples()
+        for intent, data in KNOWLEDGE_BASE.items():
+            examples = list(data["examples"]) + self._learned.get(intent, [])
+            for example in examples:
+                self._pairs.append((intent, example.lower()))
+
+    def learn_phrase(self, intent: str, phrase: str) -> bool:
+        """Milestone 6 — add a new training phrase from user testing."""
+        if intent not in KNOWLEDGE_BASE:
+            return False
+        phrase = phrase.strip().lower()
+        if not phrase:
+            return False
+        data = _load_learned_examples()
+        bucket = data.setdefault(intent, [])
+        if phrase not in bucket and phrase not in [e.lower() for e in KNOWLEDGE_BASE[intent]["examples"]]:
+            bucket.append(phrase)
+            _save_learned_examples(data)
+            self._pairs.append((intent, phrase))
+            self._learned = data
+        return True
+
+    def classify_intent(self, user_message: str) -> tuple[str, float]:
+        """Detect intent using examples, keywords, and context rules."""
+        raw = user_message.strip()
+        if not raw:
+            return "fallback", 0.0
+
+        query = normalize_message(raw)
+        if not query:
+            return "fallback", 0.0
+
+        # Fast path: short greetings / goodbyes
+        if query in ("hello", "hi", "hey", "hii", "helo", "good morning", "good evening"):
+            return "greeting", 1.0
+        if query in ("bye", "goodbye", "thanks", "thank you", "thankyou", "see you"):
+            return "goodbye", 1.0
+
+        scores: dict[str, float] = {intent: 0.0 for intent in KNOWLEDGE_BASE}
+
+        for intent, example in self._pairs:
+            sim = example_similarity(query, example)
+            if sim > scores[intent]:
+                scores[intent] = sim
+
+        for intent in KNOWLEDGE_BASE:
+            kw = keyword_intent_score(query, intent)
+            scores[intent] = max(scores[intent], kw)
+
+        has_fee = bool(
+            re.search(r"\b(fee|fees|cost|price|pay|payment|refund|scholarship|expensive|cheap)\b", query)
+            or "how much" in query
+        )
+        has_enroll = bool(
+            re.search(r"\b(enroll|enrollment|register|registration|admission|join|sign up|signup)\b", query)
+        )
+        has_course_word = bool(re.search(r"\b(course|courses|program|programs|subject|college|class)\b", query))
+
+        if re.search(r"\b(homework|assignment|quiz|grade|marks|deadline|marksheet)\b", query):
+            scores["assignments"] = max(scores["assignments"], 0.82)
+        if has_fee:
+            scores["payments"] = max(scores["payments"], 0.88)
+        if has_enroll:
+            scores["enrollment"] = max(scores["enrollment"], 0.88)
+        if has_course_word and not has_fee and not has_enroll:
+            scores["courses_info"] = max(scores["courses_info"], 0.72)
+        if re.search(r"\b(want to|wish to)\b", query) and has_course_word and not has_fee:
+            scores["enrollment"] = max(scores["enrollment"], 0.8)
+        if re.search(r"\b(teacher|teachers|faculty|instructor|professor|mentor|tutor|trainer)\b", query):
+            scores["faculty"] = max(scores["faculty"], 0.92)
+        # "courses available" must not be confused with live session recordings
+        if has_course_word and re.search(r"\bavailable\b", query):
+            scores["courses_info"] = max(scores["courses_info"], 0.95)
+            scores["live_sessions"] *= 0.25
+
+        best_intent = max(scores, key=scores.get)
+        best_score = scores[best_intent]
+
+        if best_score < CONFIDENCE_THRESHOLD:
+            return "fallback", best_score
+        return best_intent, best_score
+
+    def extract_course_topics(self, user_message: str) -> list[str]:
+        """Detect course names only as whole words (avoids false matches)."""
+        lower = normalize_message(user_message)
+        found = []
+        for keyword, label in COURSE_KEYWORDS.items():
+            if len(keyword) <= 4:
+                matched = re.search(r"\b" + re.escape(keyword) + r"\b", lower)
+            else:
+                matched = keyword in lower
+            if matched and label not in found:
+                found.append(label)
+        return found
+
+    def resolve_intents(self, user_message: str) -> list[str]:
+        """Pick one or more topics when a question covers multiple areas."""
+        query = normalize_message(user_message)
+        if not query:
+            return []
+
+        has_course = bool(re.search(r"\b(course|courses|program|programs|subject|subjects)\b", query))
+        has_fee = bool(
+            re.search(r"\b(fee|fees|cost|price|payment|pay|scholarship|refund)\b", query)
+            or "fee structure" in query
+            or "how much" in query
+        )
+        has_teacher = bool(
+            re.search(r"\b(teacher|teachers|faculty|instructor|professor|mentor|tutor|trainer)\b", query)
+            or "who teaches" in query
+        )
+
+        # Dedicated topics (no other mixing unless clearly combined)
+        if has_teacher and not has_course and not has_fee:
+            return ["faculty"]
+
+        intents: list[str] = []
+        if has_course:
+            intents.append("courses_info")
+        if has_fee:
+            intents.append("payments")
+
+        if len(intents) >= 2:
+            return intents
+
+        if intents:
+            return intents
+
+        primary, _ = self.classify_intent(user_message)
+        return [] if primary == "fallback" else [primary]
+
+    def _compose_reply(self, intents: list[str], user_message: str) -> str:
+        """Build a polished answer for single or multi-topic questions."""
+        labels = {
+            "courses_info": "Courses offered",
+            "payments": "Fee structure",
+            "enrollment": "Enrollment",
+            "technical_support": "Technical support",
+            "faculty": "Faculty & instructors",
+            "live_sessions": "Live classes",
+            "assignments": "Assignments",
+            "career": "Career support",
+            "contact": "Contact",
+            "account": "Account settings",
+            "greeting": "Welcome",
+            "goodbye": "Goodbye",
+        }
+
+        if len(intents) == 1:
+            reply = KNOWLEDGE_BASE[intents[0]]["response"]
+        else:
+            parts = []
+            for intent in intents:
+                title = labels.get(intent, intent.replace("_", " ").title())
+                body = KNOWLEDGE_BASE[intent]["response"]
+                parts.append(f"**{title}**\n{body}")
+            reply = "\n\n".join(parts)
+
+        topics = self.extract_course_topics(user_message)
+        if topics and any(i in ("courses_info", "enrollment", "faculty") for i in intents):
+            reply += (
+                f"\n\n**{topics[0]}** — see Courses -> {topics[0]} on the portal "
+                "for syllabus, instructor, fees, and batch dates."
+            )
+        return reply
+
+    def get_reply(self, user_message: str) -> dict:
+        """Return bot reply with intent and confidence for analysis."""
+        if looks_like_noise(user_message):
+            return {
+                "user_message": user_message,
+                "intent": "fallback",
+                "confidence": 0.0,
+                "reply": (
+                    "That looks like the **Run** command from your editor, not a question.\n"
+                    "Do not paste the terminal command here — just type your question.\n\n"
+                    "Examples:\n"
+                    "  - What courses are available?\n"
+                    "  - How much are the fees?\n"
+                    "  - Who are the teachers?"
+                ),
+            }
+
+        query = normalize_message(user_message)
+        if query in ("hello", "hi", "hey", "hii", "helo", "good morning", "good evening"):
+            return {
+                "user_message": user_message,
+                "intent": "greeting",
+                "confidence": 1.0,
+                "reply": KNOWLEDGE_BASE["greeting"]["response"],
+            }
+        if query in ("bye", "goodbye", "thanks", "thank you", "thankyou", "see you"):
+            return {
+                "user_message": user_message,
+                "intent": "goodbye",
+                "confidence": 1.0,
+                "reply": KNOWLEDGE_BASE["goodbye"]["response"],
+            }
+
+        intents = self.resolve_intents(user_message)
+        if not intents:
+            _, confidence = self.classify_intent(user_message)
+            return {
+                "user_message": user_message,
+                "intent": "fallback",
+                "confidence": round(confidence, 2),
+                "reply": FALLBACK_RESPONSE,
+            }
+
+        _, confidence = self.classify_intent(user_message)
+        intent_label = "+".join(intents) if len(intents) > 1 else intents[0]
+        reply = self._compose_reply(intents, user_message)
+
+        return {
+            "user_message": user_message,
+            "intent": intent_label,
+            "confidence": round(confidence, 2),
+            "reply": reply,
+        }
+
+
+def show_research() -> None:
+    """Milestone 1 — display AI technology research."""
+    print("=" * 60)
+    print("MILESTONE 1: Research AI Technologies")
+    print("=" * 60)
+    c = AI_RESEARCH["chosen"]
+    print(f"\nSelected approach: {c['name']}")
+    print(f"  Pros: {c['pros']}")
+    print(f"  Cons: {c['cons']}")
+    print("\nAlternatives evaluated:")
+    for alt in AI_RESEARCH["alternatives"]:
+        print(f"\n  • {alt['name']}")
+        print(f"    Pros: {alt['pros']}")
+        print(f"    Cons: {alt['cons']}")
+    print("\n" + "=" * 60)
+
+
+USER_TEST_SCENARIOS = [
+    ("Course discovery", "What courses are available in college?"),
+    ("Fees", "What are the courses and fee structure?"),
+    ("Faculty", "Who are the teachers?"),
+    ("Enrollment", "I wanna enroll in a new course"),
+    ("Technical", "Video not playing on my laptop"),
+    ("Assignments", "When is the assignment deadline?"),
+    ("Payments", "Can I get a scholarship?"),
+    ("Live class", "I missed my live lecture yesterday"),
+]
+
+
+def run_user_testing() -> None:
+    """Milestone 4 — structured user testing with ratings."""
+    bot = EduAssistChatbot()
+    logger = SessionLogger()
+    sid = logger.start()
+    ratings: list[int] = []
+
+    print("=" * 60)
+    print("MILESTONE 4: User Testing Phase")
+    print("=" * 60)
+    print(f"Session ID: {sid}")
+    print("8 standard test scenarios — rate each 1 (poor) to 5 (excellent).\n")
+
+    for title, question in USER_TEST_SCENARIOS:
+        result = bot.get_reply(question)
+        logger.log_exchange(question, result)
+        print(f"--- {title} ---")
+        print(f"User: {question}")
+        print(f"Intent: {result['intent']} | Confidence: {result['confidence']}")
+        print(f"Bot: {result['reply'][:200]}{'...' if len(result['reply']) > 200 else ''}\n")
+        while True:
+            try:
+                raw = input("Your rating (1-5, or Enter=5): ").strip()
+                rating = 5 if not raw else int(raw)
+                if 1 <= rating <= 5:
+                    ratings.append(rating)
+                    break
+            except ValueError:
+                pass
+            print("Please enter a number from 1 to 5.")
+
+    comment = input("\nOverall comment (optional): ").strip()
+    avg = sum(ratings) / len(ratings)
+    logger.end(rating=round(avg), comment=comment)
+
+    print(f"\nTesting complete. Average rating: {avg:.2f}/5")
+    print(f"Data saved to: {SESSIONS_FILE}")
+    print("Run: python eduassist_chatbot.py --analyze")
+    print("Then: python eduassist_chatbot.py --improve\n")
+
+
+def analyze_user_data() -> dict:
+    """Milestone 5 — analyse logged sessions and print KPIs."""
+    logger = SessionLogger()
+    sessions = logger.sessions
+
+    print("=" * 60)
+    print("MILESTONE 5: Analyse User Data")
+    print("=" * 60)
+
+    if not sessions:
+        print("\nNo session data yet. Run: python eduassist_chatbot.py --test")
+        print("Or use live chat and exit with a rating.\n")
+        return {}
+
+    total_messages = 0
+    user_turns = 0
+    confidences: list[float] = []
+    intents: Counter = Counter()
+    fallbacks = 0
+    bot_turns = 0
+    ratings: list[int] = []
+
+    for s in sessions:
+        if s.get("feedback") and s["feedback"].get("rating"):
+            ratings.append(int(s["feedback"]["rating"]))
+        for m in s.get("messages", []):
+            total_messages += 1
+            if m["role"] == "user":
+                user_turns += 1
+            if m["role"] == "bot":
+                bot_turns += 1
+                intent = m.get("intent", "")
+                intents[intent] += 1
+                if intent == "fallback":
+                    fallbacks += 1
+                if m.get("confidence") is not None:
+                    confidences.append(float(m["confidence"]))
+
+    avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+    fallback_rate = fallbacks / bot_turns if bot_turns else 0.0
+    avg_rating = sum(ratings) / len(ratings) if ratings else 0.0
+    resolution_proxy = round(1 - fallback_rate, 3)
+
+    report = {
+        "total_sessions": len(sessions),
+        "total_messages": total_messages,
+        "user_turns": user_turns,
+        "average_confidence": round(avg_conf, 3),
+        "fallback_rate": round(fallback_rate, 3),
+        "resolution_proxy": resolution_proxy,
+        "average_satisfaction": round(avg_rating, 2),
+        "intent_distribution": dict(intents),
+        "ratings_collected": len(ratings),
+    }
+
+    print(f"\nSessions analysed: {report['total_sessions']}")
+    print(f"User messages: {report['user_turns']}")
+    print(f"Average NLP confidence: {report['average_confidence']}")
+    print(f"Fallback rate: {report['fallback_rate']} (lower is better)")
+    print(f"Resolution proxy (1 - fallback): {report['resolution_proxy']}")
+    print(f"Average user satisfaction: {report['average_satisfaction']}/5 ({report['ratings_collected']} ratings)")
+    print("\nIntent distribution:")
+    for name, count in sorted(intents.items(), key=lambda x: -x[1]):
+        print(f"  {name}: {count}")
+
+    report_path = DATA_DIR / "analytics_report.json"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    print(f"\nReport saved: {report_path}\n")
+    return report
+
+
+def apply_improvements() -> int:
+    """Milestone 6 — learn new phrases from failed/low-confidence interactions."""
+    logger = SessionLogger()
+    bot = EduAssistChatbot()
+    added = 0
+
+    print("=" * 60)
+    print("MILESTONE 6: Implement Improvements")
+    print("=" * 60)
+
+    fallback_phrases: list[str] = []
+    for s in logger.sessions:
+        msgs = s.get("messages", [])
+        for i, m in enumerate(msgs):
+            if m.get("role") == "bot" and m.get("intent") == "fallback" and i > 0:
+                prev = msgs[i - 1]
+                if prev.get("role") == "user":
+                    fallback_phrases.append(prev["content"])
+
+    if not fallback_phrases:
+        print("\nNo fallback questions in logs — bot is performing well.")
+        print("Run --test first or chat live to generate improvement data.\n")
+        return 0
+
+    unique = list({normalize_message(p): p for p in fallback_phrases}.values())
+    print(f"\nFound {len(unique)} unique unanswered-style question(s).\n")
+
+    for phrase in unique:
+        norm = normalize_message(phrase)
+        probe = EduAssistChatbot()
+        intent, conf = probe.classify_intent(phrase)
+        if intent == "fallback":
+            intents = probe.resolve_intents(phrase)
+            intent = intents[0] if intents else "courses_info"
+        if conf < 0.5 and not probe.resolve_intents(phrase):
+            q = norm
+            if re.search(r"\b(fee|fees|cost|price)\b", q):
+                intent = "payments"
+            elif re.search(r"\b(enroll|register|admission)\b", q):
+                intent = "enrollment"
+            elif re.search(r"\b(teacher|faculty)\b", q):
+                intent = "faculty"
+            elif re.search(r"\b(course|courses)\b", q):
+                intent = "courses_info"
+
+        if bot.learn_phrase(intent, phrase):
+            print(f"  Learned [{intent}]: {phrase[:70]}")
+            added += 1
+
+    print(f"\nAdded {added} new training phrase(s) to {LEARNED_FILE}")
+    print("Restart chat to use improved responses.\n")
+    return added
+
+
+def _ask_exit_feedback(logger: SessionLogger) -> None:
+    print("\n--- Quick feedback (user testing) ---")
+    try:
+        raw = input("Rate this chat 1-5 (Enter to skip): ").strip()
+        if not raw:
+            logger.end()
+            return
+        rating = int(raw)
+        if 1 <= rating <= 5:
+            comment = input("Comment (optional): ").strip()
+            logger.end(rating=rating, comment=comment)
+            print("Thank you — feedback saved for analysis.")
+            if rating <= 2:
+                print("Tip: run  python eduassist_chatbot.py --improve")
+        else:
+            logger.end()
+    except ValueError:
+        logger.end()
+
+
+def run_demo() -> None:
+    """Automatic demo for examiner (no input required)."""
+    bot = EduAssistChatbot()
+    test_messages = [
+        "hello",
+        "what courses are available",
+        "what are the courses and fee structure",
+        "who are the teachers",
+        "how do I enroll in data science",
+        "video not playing",
+        "thank you bye",
+    ]
+
+    print("=" * 60)
+    print("EduAssist - AI Customer Support Chatbot")
+    print("Online Education Platform (LearnHub)")
+    print("=" * 60)
+    print("Supported topics: courses | enrollment | payments | technical support")
+    print("-" * 60)
+
+    for msg in test_messages:
+        result = bot.get_reply(msg)
+        print(f"\nUser: {result['user_message']}")
+        print(f"Intent: {result['intent']} | Confidence: {result['confidence']}")
+        print(f"Bot:  {result['reply']}")
+
+    print("\n" + "=" * 60)
+    print("Demo complete. All test cases executed successfully.")
+    print("=" * 60)
+
+
+def run_interactive() -> None:
+    """Milestone 2 — live chatbot prototype with logging."""
+    bot = EduAssistChatbot()
+    logger = SessionLogger()
+    logger.start()
+
+    print("=" * 60)
+    print("MILESTONE 2 & 3: Chatbot Prototype + NLP")
+    print("EduAssist - LearnHub Online College Support")
+    print("=" * 60)
+    print(f"\nEduAssist: {KNOWLEDGE_BASE['greeting']['response']}")
+    print("\nAsk about courses, fees, teachers, enrollment, assignments, or tech issues.")
+    print("Commands: quit | learn <intent> <your phrase>  (teach the bot)")
+    print("(Do not paste the python run command here.)\n")
+
+    while True:
+        try:
+            user = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n\nEduAssist: Goodbye!")
+            _ask_exit_feedback(logger)
+            break
+
+        if not user:
+            continue
+
+        if looks_like_noise(user):
+            print(
+                "\nEduAssist: That is the program launch command, not a question.\n"
+                "Please type something like: What courses are available?\n"
+            )
+            continue
+
+        if user.lower().startswith("learn "):
+            parts = user.split(maxsplit=2)
+            if len(parts) >= 3 and parts[1] in KNOWLEDGE_BASE:
+                ok = bot.learn_phrase(parts[1], parts[2])
+                print(
+                    f"\nEduAssist: {'Learned new phrase.' if ok else 'Already known.'}\n"
+                )
+            else:
+                print(
+                    "\nEduAssist: Usage: learn <intent> <phrase>\n"
+                    f"Intents: {', '.join(KNOWLEDGE_BASE.keys())}\n"
+                )
+            continue
+
+        if user.lower() in ("quit", "exit", "bye", "goodbye"):
+            farewell = bot.get_reply("goodbye")
+            logger.log_exchange(user, farewell)
+            print(f"\nEduAssist: {farewell['reply']}")
+            _ask_exit_feedback(logger)
+            break
+
+        result = bot.get_reply(user)
+        logger.log_exchange(user, result)
+        print(f"\nEduAssist: {result['reply']}\n")
+
+
+def print_usage() -> None:
+    print(
+        "EduAssist — all project milestones in one file:\n"
+        "  python eduassist_chatbot.py              Live chat (prototype + NLP)\n"
+        "  python eduassist_chatbot.py --research   AI technology research\n"
+        "  python eduassist_chatbot.py --test       User testing phase\n"
+        "  python eduassist_chatbot.py --analyze    Analyse user data\n"
+        "  python eduassist_chatbot.py --improve    Implement improvements\n"
+        "  python eduassist_chatbot.py --demo       Quick demo\n"
+        "  python eduassist_chatbot.py --all        Run test + analyze + improve\n"
+    )
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        run_interactive()
+    elif sys.argv[1] == "--demo":
+        run_demo()
+    elif sys.argv[1] == "--research":
+        show_research()
+    elif sys.argv[1] == "--test":
+        run_user_testing()
+    elif sys.argv[1] == "--analyze":
+        analyze_user_data()
+    elif sys.argv[1] == "--improve":
+        apply_improvements()
+    elif sys.argv[1] == "--all":
+        run_user_testing()
+        analyze_user_data()
+        apply_improvements()
+    elif sys.argv[1] in ("-h", "--help"):
+        print_usage()
+    else:
+        print(f"Unknown option: {sys.argv[1]}\n")
+        print_usage()
